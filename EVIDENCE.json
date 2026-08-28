@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "owner": "Lars Schouw",
+  "reviewed_on": "2026-08-28",
+  "license": "MIT",
+  "artifact": {
+    "id": "E-CODE-002",
+    "title": "Transaction reconciliation",
+    "source_path": ".",
+    "publication_status": "public",
+    "public_url": "https://github.com/damian123/transaction-reconciliation-typescript",
+    "verification_command": "npm ci && npm run typecheck && npm test && npm run demo",
+    "expected_test_count": 8,
+    "claims_supported": [
+      "exact fixed-scale financial values",
+      "deterministic matching",
+      "explicit ambiguity",
+      "late reversals",
+      "controlled overrides",
+      "audit history"
+    ],
+    "evidence_files": [
+      "README.md",
+      "src/",
+      "test/",
+      "portfolio/"
+    ],
+    "claim_boundary": "Synthetic digital-asset operations; no exchange, custody, wallet, account, client, or production data."
+  }
+}

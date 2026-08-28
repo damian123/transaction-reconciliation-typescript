@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f5f8fb"/>
+      <stop offset="1" stop-color="#e8f0f5"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#0c2235" flood-opacity="0.16"/>
+    </filter>
+    <style>
+      .title { font-family: Arial, sans-serif; font-size: 48px; font-weight: 700; fill: #0d263a; }
+      .subtitle { font-family: Arial, sans-serif; font-size: 22px; font-weight: 400; fill: #567086; }
+      .metric { font-family: Arial, sans-serif; font-size: 46px; font-weight: 700; fill: #0e775f; }
+      .metricLabel { font-family: Arial, sans-serif; font-size: 17px; font-weight: 600; fill: #3b586d; }
+      .code { font-family: Menlo, Consolas, monospace; font-size: 16px; font-weight: 400; fill: #d9e7ef; }
+      .codeAccent { font-family: Menlo, Consolas, monospace; font-size: 17px; font-weight: 700; fill: #7de3c4; }
+      .small { font-family: Arial, sans-serif; font-size: 16px; font-weight: 400; fill: #5e7588; }
+    </style>
+  </defs>
+  <rect width="1200" height="800" fill="url(#bg)"/>
+  <text x="72" y="92" class="title">Verified reconciliation behavior</text>
+  <text x="72" y="132" class="subtitle">Executable evidence for matching, ambiguity, reversals, overrides, and controls</text>
+
+  <g filter="url(#shadow)">
+    <rect x="72" y="188" width="300" height="150" rx="20" fill="#ffffff"/>
+    <text x="102" y="250" class="metric">8 / 8</text>
+    <text x="102" y="290" class="metricLabel">acceptance tests passing</text>
+
+    <rect x="400" y="188" width="300" height="150" rx="20" fill="#ffffff"/>
+    <text x="430" y="250" class="metric">4 rules</text>
+    <text x="430" y="290" class="metricLabel">evaluated in explicit order</text>
+
+    <rect x="728" y="188" width="400" height="150" rx="20" fill="#ffffff"/>
+    <text x="758" y="250" class="metric">0 floats</text>
+    <text x="758" y="290" class="metricLabel">fixed-scale bigint financial values</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="72" y="382" width="1056" height="326" rx="22" fill="#0b1d2b"/>
+    <text x="110" y="428" class="codeAccent">$ npm test</text>
+    <text x="110" y="464" class="code">✓ duplicate imports create no duplicate source or match result</text>
+    <text x="110" y="496" class="code">✓ shared identifiers match across differing display timestamps</text>
+    <text x="110" y="528" class="code">✓ custody fees match only under the named asset tolerance rule</text>
+    <text x="110" y="560" class="code">✓ equally plausible candidates remain unresolved and visible</text>
+    <text x="110" y="592" class="code">✓ late reversals reopen cases without deleting accepted history</text>
+    <text x="110" y="624" class="code">✓ split transfers require an explicit rule and passing total</text>
+    <text x="110" y="656" class="code">✓ overrides retain actor, reason, previous state, and evidence</text>
+    <text x="110" y="688" class="code">✓ exception and control totals tie back to normalized records</text>
+  </g>
+
+  <text x="72" y="758" class="small">TypeScript · Node.js · Vitest · strict typecheck · synthetic digital-asset operations</text>
+</svg>
