@@ -12,18 +12,19 @@ PNG exports for proposals and interview screen sharing: [architecture](portfolio
 
 ## Scenario
 
-An operations team receives trades and transfers from multiple synthetic sources. Identifiers do not always align, timestamps and fees differ, transfers may be split or aggregated, reversals arrive late, and duplicate exports are common. Operators need deterministic automation without losing the evidence behind each decision.
+An operations team receives trades and transfers from multiple synthetic sources. Identifiers do not always align, timestamps and fees differ, transfers may be split into ledger parts, reversals arrive after reconciliation, and duplicate exports are common. Operators need deterministic automation without losing the evidence behind each decision.
 
 ## Demonstrated outcome
 
-- Ingest versioned CSV and API-shaped fixtures with source provenance.
-- Normalize assets, quantities, fees, identifiers, and UTC timestamps without discarding raw values.
+- Ingest versioned API-shaped records with source provenance and preserved raw values.
+- Normalize assets, quantities, fees, and explicitly offset RFC 3339 timestamps.
 - Apply exact rules before explicitly ordered tolerance and composite rules.
+- Require shared identifiers to agree on domain, quantity, and fee, and reserve ledger evidence to one accepted case.
 - Keep ambiguous candidates unresolved rather than selecting the closest record silently.
-- Explain every match with rule version, input fields, tolerance, and confidence category.
-- Route unmatched, invalid, duplicate, late, reversal, and ambiguous records to an exception queue.
-- Record manual resolutions as append-only audit events.
-- Produce population counts and quantity/value control totals by asset and source.
+- Explain every case with a named rule, rule version, evidence IDs, and confidence category.
+- Keep unmatched source events and ambiguous candidates as cases; route invalid, identical-duplicate, and conflicting-key imports to exceptions; record reversals in audit history.
+- Record validated manual resolutions as append-only audit events and preserve them across reruns.
+- Produce population counts, fixed-scale quantity/fee totals by asset and source, and explicit unmatched-ledger coverage.
 
 ## Synthetic data model
 
@@ -40,14 +41,20 @@ Every derived record retains stable links to its raw source and transformation v
 
 ## Acceptance scenarios
 
-1. Re-importing the same exchange export creates no duplicate source or match result.
-2. A trade matches exactly by shared identifier even when its display timestamp differs.
-3. A custody fee within the configured asset precision matches under a named tolerance rule.
-4. Two equally plausible candidates create one ambiguous case and no automatic match.
-5. A late reversal reopens the affected case without deleting its accepted history.
-6. A split transfer can match one-to-many only when the explicit aggregation rule and control total pass.
-7. An operator override records actor, reason, previous result, new result, and supporting evidence.
-8. Dashboard counts and per-asset totals tie back to every source record in the acceptance fixtures.
+1. An identical re-import creates no duplicate source or match result.
+2. A trade matches by shared identifier despite timestamp differences when its financial fields agree.
+3. A shared identifier with conflicting financial fields remains unresolved.
+4. One ledger event cannot be accepted by two source cases.
+5. A custody fee within configured asset precision matches under a named tolerance rule.
+6. Two equally plausible candidates create one ambiguous case and no automatic match.
+7. A late reversal reopens the affected case and remains reopened across reruns.
+8. A split transfer matches one-to-many only when its explicit aggregation rule and control total pass.
+9. A manual resolution records its actor, reason, transition, and evidence and survives reruns.
+10. Dashboard ledger coverage lists every normalized, non-reversal ledger event that remains unclaimed.
+11. Timestamps require deterministic RFC 3339 parsing with an explicit offset.
+12. A corrected record can replace an invalid import, while changed reuse of an accepted key is rejected as a conflict.
+13. Manual evidence must be non-reversal ledger data in the case domain and not claimed elsewhere.
+14. Dashboard populations and per-asset control totals distinguish raw imports from normalized records.
 
 ## Implemented stack
 
@@ -58,14 +65,17 @@ The engine uses fixed-scale `bigint` arithmetic rather than floating-point value
 ## Implemented behavior
 
 - Idempotent import keyed by source and source record ID.
+- Corrected recovery for invalid imports and explicit conflict rejection for accepted keys.
 - Versioned normalization with preserved links to raw records.
-- Ordered exact-identifier, explicit aggregation, exact-composite, and named tolerance rules.
+- Deterministic parsing of explicitly offset RFC 3339 timestamps.
+- Ordered financially consistent exact-identifier, explicit aggregation, exact-composite, and named tolerance rules.
+- Exclusive ownership of accepted ledger evidence.
 - Ambiguous-candidate preservation instead of silent closest-match selection.
 - Explicit one-to-many matching only under a configured aggregation rule and passing control total.
 - Late-reversal reopening without deleting accepted history.
-- Manual resolution with actor, reason, previous status, new status, and selected evidence.
-- Source-and-asset control totals plus dashboard population counts.
-- Invalid and duplicate inputs routed to an exception record.
+- Manual resolution with actor, reason, previous status, new status, selected evidence validation, and rerun preservation.
+- Source-and-asset control totals, dashboard population counts, and unmatched-ledger coverage.
+- Invalid, identical-duplicate, and conflicting accepted-key inputs routed to exception records.
 
 ## Repository shape
 
@@ -75,19 +85,17 @@ src/types.ts      source, normalized, case, audit, and reporting contracts
 src/store.ts      in-memory persistence and append-only audit recording
 src/engine.ts     import, normalization, ordered matching, reversal, and override logic
 src/demo.ts       executable structured-output walkthrough
-test/             eight acceptance tests
+test/             fourteen acceptance tests
 ```
 
 ## Run it
 
 ```bash
-npm install
-npm run typecheck
-npm test
-npm run demo
+npm ci
+npm run verify
 ```
 
-Verified on 2026-08-27: eight tests passed, the TypeScript compiler check passed, and the structured-output demo completed.
+Verified on 2026-08-29: fourteen tests passed, the TypeScript compiler check passed, and the structured-output demo completed.
 
 ## Portfolio evidence
 
@@ -100,3 +108,7 @@ Verified on 2026-08-27: eight tests passed, the TypeScript compiler check passed
 ## Non-goals
 
 No real customer, exchange, blockchain, wallet, account, tax lot, pricing feed, or regulated reporting data. The demo does not provide accounting, investment, audit, tax, custody, or regulatory advice.
+
+## Provenance
+
+Artifact owner: Lars Schouw. Repository account: [`damian123`](https://github.com/damian123). Commits may use the display name Damian; `EVIDENCE.json` records this mapping explicitly.

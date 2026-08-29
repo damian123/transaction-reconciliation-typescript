@@ -45,6 +45,47 @@ function optionalFields(input: SourceRecordInput): Pick<SourceRecordInput, "exte
   };
 }
 
+function parseTimestampWithExplicitOffset(value: string): number {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|([+-])(\d{2}):(\d{2}))$/.exec(value);
+  if (match === null) {
+    throw new Error(`Timestamp must be RFC 3339 with an explicit UTC offset: ${value}`);
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const millisecond = Number((match[7] ?? "").padEnd(3, "0") || "0");
+  const offsetHour = Number(match[10] ?? "0");
+  const offsetMinute = Number(match[11] ?? "0");
+  if (offsetHour > 23 || offsetMinute > 59) {
+    throw new Error(`Invalid UTC offset in timestamp ${value}`);
+  }
+
+  const wallClock = new Date(0);
+  wallClock.setUTCFullYear(year, month - 1, day);
+  wallClock.setUTCHours(hour, minute, second, millisecond);
+  if (
+    wallClock.getUTCFullYear() !== year ||
+    wallClock.getUTCMonth() !== month - 1 ||
+    wallClock.getUTCDate() !== day ||
+    wallClock.getUTCHours() !== hour ||
+    wallClock.getUTCMinutes() !== minute ||
+    wallClock.getUTCSeconds() !== second ||
+    wallClock.getUTCMilliseconds() !== millisecond
+  ) {
+    throw new Error(`Invalid timestamp ${value}`);
+  }
+
+  const direction = match[9] === "-" ? -1 : 1;
+  const offsetMs = direction * (offsetHour * 60 + offsetMinute) * 60 * 1_000;
+  const occurredAtMs = wallClock.getTime() - offsetMs;
+  if (!Number.isSafeInteger(occurredAtMs)) throw new Error(`Invalid timestamp ${value}`);
+  return occurredAtMs;
+}
+
 export class ReconciliationEngine {
   readonly config: ReconciliationConfig;
 
@@ -64,17 +105,6 @@ export class ReconciliationEngine {
   import(input: SourceRecordInput, schemaVersion = "source-1"): ImportOutcome {
     this.store.importAttempts += 1;
     const key = sourceKey(input);
-    if (this.store.sourceRecords.has(key)) {
-      this.store.exceptions.push({
-        exceptionId: `exception-${this.store.exceptions.length + 1}`,
-        sourceKey: key,
-        category: "duplicate",
-        reason: "Duplicate source record ignored",
-        at: now(),
-      });
-      return { sourceKey: key, status: "duplicate", reason: "Duplicate source record ignored" };
-    }
-
     const importedAt = now();
     const record: SourceRecord = {
       source: input.source,
@@ -88,15 +118,43 @@ export class ReconciliationEngine {
       importedAt,
       schemaVersion,
     };
-    this.store.sourceRecords.set(key, record);
+    const existing = this.store.sourceRecords.get(key);
+    if (existing !== undefined && this.sameSourceRecord(existing, record)) {
+      this.store.exceptions.push({
+        exceptionId: `exception-${this.store.exceptions.length + 1}`,
+        sourceKey: key,
+        category: "duplicate",
+        reason: "Duplicate source record ignored",
+        at: now(),
+      });
+      return { sourceKey: key, status: "duplicate", reason: "Duplicate source record ignored" };
+    }
+
+    if (existing !== undefined && this.store.normalizedEvents.has(key)) {
+      const reason = "Accepted source key was reused with a conflicting payload";
+      this.store.exceptions.push({
+        exceptionId: `exception-${this.store.exceptions.length + 1}`,
+        sourceKey: key,
+        category: "conflict",
+        reason,
+        at: now(),
+      });
+      return { sourceKey: key, status: "conflict", reason };
+    }
 
     try {
       const event = this.normalize(record);
+      this.store.sourceRecords.set(key, record);
       this.store.normalizedEvents.set(event.eventId, event);
       if (event.reversalOf) this.reopenForReversal(event);
-      return { sourceKey: key, status: "imported" };
+      return {
+        sourceKey: key,
+        status: "imported",
+        ...(existing === undefined ? {} : { reason: "Corrected invalid source record imported" }),
+      };
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Unknown normalization error";
+      if (existing === undefined) this.store.sourceRecords.set(key, record);
       this.store.exceptions.push({
         exceptionId: `exception-${this.store.exceptions.length + 1}`,
         sourceKey: key,
@@ -111,16 +169,65 @@ export class ReconciliationEngine {
   reconcileAll(): ReconciliationCase[] {
     const sources = [...this.store.normalizedEvents.values()].filter(
       (event) => event.source !== "ledger" && !event.reversalOf,
-    );
-    return sources.map((event) => this.reconcileEvent(event));
+    ).sort((left, right) => left.eventId.localeCompare(right.eventId));
+    const ledgers = [...this.store.normalizedEvents.values()].filter(
+      (event) => event.source === "ledger" && !event.reversalOf,
+    ).sort((left, right) => left.eventId.localeCompare(right.eventId));
+    const claimedLedgerIds = new Set<string>();
+    const protectedCases = new Map<string, ReconciliationCase>();
+
+    for (const source of sources) {
+      const existing = this.store.cases.get(caseIdFor(source));
+      if (existing?.status !== "resolved" && existing?.status !== "reopened") continue;
+      protectedCases.set(source.eventId, existing);
+      this.claimCaseLedgers(existing, claimedLedgerIds);
+    }
+
+    const results: ReconciliationCase[] = [];
+    for (const source of sources) {
+      const protectedCase = protectedCases.get(source.eventId);
+      if (protectedCase !== undefined) {
+        results.push(protectedCase);
+        continue;
+      }
+      const availableLedgers = ledgers.filter(
+        (candidate) => !claimedLedgerIds.has(candidate.eventId),
+      );
+      const result = this.reconcileEvent(source, availableLedgers, ledgers);
+      results.push(result);
+      if (result.status === "accepted") this.claimCaseLedgers(result, claimedLedgerIds);
+    }
+    return results;
   }
 
   resolveManually(caseId: string, selectedEventIds: string[], actor: string, reason: string): ReconciliationCase {
     if (!actor.trim() || !reason.trim()) throw new Error("Manual resolution requires actor and reason");
     const existing = this.store.cases.get(caseId);
     if (!existing) throw new Error(`Unknown case ${caseId}`);
+    if (selectedEventIds.length === 0) throw new Error("Manual resolution requires evidence selections");
+    if (new Set(selectedEventIds).size !== selectedEventIds.length) {
+      throw new Error("Manual evidence selections must be unique");
+    }
+    const sourceEvents = existing.sourceEventIds.map((eventId) => {
+      const event = this.store.normalizedEvents.get(eventId);
+      if (event === undefined || event.source === "ledger") {
+        throw new Error(`Case ${caseId} has no valid non-ledger source evidence`);
+      }
+      return event;
+    });
+    const claimedElsewhere = this.claimedLedgerIds(caseId);
     for (const eventId of selectedEventIds) {
-      if (!this.store.normalizedEvents.has(eventId)) throw new Error(`Unknown selected event ${eventId}`);
+      const selected = this.store.normalizedEvents.get(eventId);
+      if (selected === undefined) throw new Error(`Unknown selected event ${eventId}`);
+      if (selected.source !== "ledger" || selected.reversalOf) {
+        throw new Error(`Manual evidence ${eventId} must be a non-reversal ledger event`);
+      }
+      if (sourceEvents.some((source) => !this.sameDomain(source, selected))) {
+        throw new Error(`Manual evidence ${eventId} is outside the case domain`);
+      }
+      if (claimedElsewhere.has(eventId)) {
+        throw new Error(`Manual evidence ${eventId} is already claimed by another case`);
+      }
     }
 
     const updated: ReconciliationCase = {
@@ -137,8 +244,8 @@ export class ReconciliationEngine {
       auditId: `audit-${this.store.audit.length + 1}`,
       action: "manual_resolution",
       caseId,
-      actor,
-      reason,
+      actor: actor.trim(),
+      reason: reason.trim(),
       at: updated.updatedAt,
       previousStatus: existing.status,
       newStatus: updated.status,
@@ -160,6 +267,7 @@ export class ReconciliationEngine {
       exceptions: this.store.exceptions.length,
       cases,
       controlTotals: this.controlTotals(),
+      ledgerCoverage: this.ledgerCoverage(),
     };
   }
 
@@ -167,8 +275,7 @@ export class ReconciliationEngine {
     const asset = record.asset.trim().toUpperCase();
     const scale = this.config.assetScale[asset];
     if (scale === undefined) throw new Error(`Unsupported asset ${asset}`);
-    const occurredAtMs = Date.parse(record.occurredAt);
-    if (!Number.isFinite(occurredAtMs)) throw new Error(`Invalid timestamp ${record.occurredAt}`);
+    const occurredAtMs = parseTimestampWithExplicitOffset(record.occurredAt);
 
     return {
       eventId: record.sourceKey,
@@ -186,14 +293,28 @@ export class ReconciliationEngine {
     };
   }
 
-  private reconcileEvent(source: NormalizedEvent): ReconciliationCase {
-    const ledgers = [...this.store.normalizedEvents.values()].filter(
-      (candidate) => candidate.source === "ledger" && !candidate.reversalOf,
-    );
-    const exactId = source.externalId
-      ? ledgers.filter((candidate) => candidate.externalId === source.externalId && this.sameDomain(source, candidate))
+  private reconcileEvent(
+    source: NormalizedEvent,
+    ledgers: NormalizedEvent[],
+    allLedgers: NormalizedEvent[],
+  ): ReconciliationCase {
+    const sameIdentifier = source.externalId
+      ? allLedgers.filter((candidate) => candidate.externalId === source.externalId)
       : [];
-    if (exactId.length > 0) return this.finish(source, exactId, "exact-identifier", "exact");
+    if (sameIdentifier.length > 0) {
+      const availableIds = new Set(ledgers.map((candidate) => candidate.eventId));
+      const exactId = sameIdentifier.filter(
+        (candidate) =>
+          availableIds.has(candidate.eventId) &&
+          this.sameDomain(source, candidate) &&
+          candidate.quantityAtomic === source.quantityAtomic &&
+          candidate.feeAtomic === source.feeAtomic,
+      );
+      if (exactId.length === sameIdentifier.length) {
+        return this.finish(source, exactId, "exact-identifier", "exact");
+      }
+      return this.identifierConflict(source, sameIdentifier);
+    }
 
     const aggregation = this.findAggregation(source, ledgers);
     if (aggregation.length > 0) return this.finish(source, aggregation, "explicit-one-to-many", "composite");
@@ -220,6 +341,23 @@ export class ReconciliationEngine {
     if (toleranceMatches.length > 0) return this.finish(source, toleranceMatches, "asset-fee-tolerance", "tolerance");
 
     return this.finish(source, [], "no-match", "none");
+  }
+
+  private identifierConflict(
+    source: NormalizedEvent,
+    candidates: NormalizedEvent[],
+  ): ReconciliationCase {
+    return this.store.saveCase({
+      caseId: caseIdFor(source),
+      sourceEventIds: [source.eventId],
+      candidateEventIds: candidates.map((candidate) => candidate.eventId),
+      status: "ambiguous",
+      ruleName: "identifier-conflict",
+      ruleVersion: this.config.ruleVersion,
+      explanation: "Shared identifier candidates conflict on domain, financial fields, or exclusive ownership",
+      confidence: "none",
+      updatedAt: now(),
+    });
   }
 
   private finish(
@@ -273,6 +411,52 @@ export class ReconciliationEngine {
     return Math.abs(left.occurredAtMs - right.occurredAtMs) <= this.config.timestampWindowMs;
   }
 
+  private claimCaseLedgers(
+    reconciliationCase: ReconciliationCase,
+    claimed: Set<string>,
+  ): void {
+    for (const eventId of reconciliationCase.candidateEventIds) {
+      const event = this.store.normalizedEvents.get(eventId);
+      if (event?.source !== "ledger" || event.reversalOf) continue;
+      if (claimed.has(eventId)) {
+        throw new Error(`Ledger event ${eventId} is claimed by multiple preserved cases`);
+      }
+      claimed.add(eventId);
+    }
+  }
+
+  private claimedLedgerIds(excludedCaseId?: string): Set<string> {
+    const claimed = new Set<string>();
+    for (const reconciliationCase of this.store.cases.values()) {
+      if (
+        reconciliationCase.caseId === excludedCaseId ||
+        !["accepted", "resolved", "reopened"].includes(reconciliationCase.status)
+      ) {
+        continue;
+      }
+      for (const eventId of reconciliationCase.candidateEventIds) {
+        if (this.store.normalizedEvents.get(eventId)?.source === "ledger") claimed.add(eventId);
+      }
+    }
+    return claimed;
+  }
+
+  private sameSourceRecord(left: SourceRecord, right: SourceRecord): boolean {
+    return (
+      left.source === right.source &&
+      left.recordId === right.recordId &&
+      left.kind === right.kind &&
+      left.asset === right.asset &&
+      left.quantity === right.quantity &&
+      left.occurredAt === right.occurredAt &&
+      left.externalId === right.externalId &&
+      left.fee === right.fee &&
+      left.aggregationGroup === right.aggregationGroup &&
+      left.reversalOf === right.reversalOf &&
+      left.schemaVersion === right.schemaVersion
+    );
+  }
+
   private reopenForReversal(reversal: NormalizedEvent): void {
     const originalEventId = reversal.reversalOf;
     if (!originalEventId) return;
@@ -321,5 +505,20 @@ export class ReconciliationEngine {
     return [...totals.values()].sort((left, right) =>
       `${left.source}:${left.asset}`.localeCompare(`${right.source}:${right.asset}`),
     );
+  }
+
+  private ledgerCoverage(): DashboardSummary["ledgerCoverage"] {
+    const ledgerIds = [...this.store.normalizedEvents.values()]
+      .filter((event) => event.source === "ledger" && !event.reversalOf)
+      .map((event) => event.eventId)
+      .sort();
+    const claimed = this.claimedLedgerIds();
+    const unmatchedEventIds = ledgerIds.filter((eventId) => !claimed.has(eventId));
+    return {
+      total: ledgerIds.length,
+      matched: ledgerIds.length - unmatchedEventIds.length,
+      unmatched: unmatchedEventIds.length,
+      unmatchedEventIds,
+    };
   }
 }

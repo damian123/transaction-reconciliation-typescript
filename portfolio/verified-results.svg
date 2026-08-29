@@ -23,7 +23,7 @@
 
   <g filter="url(#shadow)">
     <rect x="72" y="188" width="300" height="150" rx="20" fill="#ffffff"/>
-    <text x="102" y="250" class="metric">8 / 8</text>
+    <text x="102" y="250" class="metric">14 / 14</text>
     <text x="102" y="290" class="metricLabel">acceptance tests passing</text>
 
     <rect x="400" y="188" width="300" height="150" rx="20" fill="#ffffff"/>
@@ -39,13 +39,13 @@
     <rect x="72" y="382" width="1056" height="326" rx="22" fill="#0b1d2b"/>
     <text x="110" y="428" class="codeAccent">$ npm test</text>
     <text x="110" y="464" class="code">✓ duplicate imports create no duplicate source or match result</text>
-    <text x="110" y="496" class="code">✓ shared identifiers match across differing display timestamps</text>
+    <text x="110" y="496" class="code">✓ financially consistent shared IDs match across timestamp differences</text>
     <text x="110" y="528" class="code">✓ custody fees match only under the named asset tolerance rule</text>
     <text x="110" y="560" class="code">✓ equally plausible candidates remain unresolved and visible</text>
     <text x="110" y="592" class="code">✓ late reversals reopen cases without deleting accepted history</text>
     <text x="110" y="624" class="code">✓ split transfers require an explicit rule and passing total</text>
     <text x="110" y="656" class="code">✓ overrides retain actor, reason, previous state, and evidence</text>
-    <text x="110" y="688" class="code">✓ exception and control totals tie back to normalized records</text>
+    <text x="110" y="688" class="code">✓ dashboard separates raw, normalized, and unclaimed ledger totals</text>
   </g>
 
   <text x="72" y="758" class="small">TypeScript · Node.js · Vitest · strict typecheck · synthetic digital-asset operations</text>

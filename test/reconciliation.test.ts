@@ -52,6 +52,37 @@ describe("transaction reconciliation", () => {
     expect(result).toMatchObject({ status: "accepted", ruleName: "exact-identifier", confidence: "exact" });
   });
 
+  it("does not accept a shared identifier with conflicting financial fields", () => {
+    const engine = new ReconciliationEngine();
+    engine.import(exchangeTrade);
+    engine.import({ ...ledgerTrade, quantity: "2.00000000" });
+
+    const [result] = engine.reconcileAll();
+    expect(result).toMatchObject({
+      status: "ambiguous",
+      ruleName: "identifier-conflict",
+      confidence: "none",
+      candidateEventIds: ["ledger:ledger-1"],
+    });
+  });
+
+  it("reserves each ledger event for at most one accepted source case", () => {
+    const engine = new ReconciliationEngine();
+    engine.import(withoutExternalId(exchangeTrade, "source-a"));
+    engine.import(withoutExternalId(exchangeTrade, "source-b"));
+    engine.import(withoutExternalId(ledgerTrade, "exclusive-ledger"));
+
+    expect(engine.reconcileAll().map((result) => result.status)).toEqual([
+      "accepted",
+      "unmatched",
+    ]);
+    expect(
+      [...engine.store.cases.values()].filter((item) =>
+        item.candidateEventIds.includes("ledger:exclusive-ledger"),
+      ),
+    ).toHaveLength(1);
+  });
+
   it("matches a custody fee within the configured asset precision tolerance", () => {
     const engine = new ReconciliationEngine();
     engine.import({
@@ -111,6 +142,11 @@ describe("transaction reconciliation", () => {
       action: "reversal_received",
       previousStatus: "accepted",
       newStatus: "reopened",
+    });
+    expect(engine.reconcileAll()[0]).toMatchObject({
+      caseId: accepted?.caseId,
+      status: "reopened",
+      ruleName: "late-reversal",
     });
   });
 
@@ -180,6 +216,104 @@ describe("transaction reconciliation", () => {
       newStatus: "resolved",
       selectedEventIds: ["ledger:manual-a"],
     });
+    expect(engine.reconcileAll()[0]).toEqual(resolved);
+  });
+
+  it("accounts explicitly for ledger records that no accepted case claims", () => {
+    const engine = new ReconciliationEngine();
+    engine.import(withoutExternalId(ledgerTrade, "orphan-ledger"));
+    engine.reconcileAll();
+    expect(engine.dashboard().ledgerCoverage).toEqual({
+      total: 1,
+      matched: 0,
+      unmatched: 1,
+      unmatchedEventIds: ["ledger:orphan-ledger"],
+    });
+
+    engine.import(withoutExternalId(exchangeTrade, "later-source"));
+    engine.reconcileAll();
+    expect(engine.dashboard().ledgerCoverage).toEqual({
+      total: 1,
+      matched: 1,
+      unmatched: 0,
+      unmatchedEventIds: [],
+    });
+  });
+
+  it("requires deterministic RFC 3339 timestamps with an explicit offset", () => {
+    const engine = new ReconciliationEngine();
+    expect(engine.import({ ...exchangeTrade, recordId: "missing-offset", occurredAt: "2026-08-27T09:00:00" })).toMatchObject({
+      status: "invalid",
+      reason: expect.stringContaining("explicit UTC offset"),
+    });
+    expect(engine.import({ ...exchangeTrade, recordId: "invalid-day", occurredAt: "2026-02-30T09:00:00Z" }).status).toBe("invalid");
+    expect(engine.import({ ...exchangeTrade, recordId: "offset-ok", occurredAt: "2026-08-27T18:00:00+09:00" }).status).toBe("imported");
+    expect(engine.store.normalizedEvents.get("exchange:offset-ok")?.occurredAtMs).toBe(
+      Date.parse("2026-08-27T09:00:00Z"),
+    );
+  });
+
+  it("accepts a corrected re-import after invalid normalization but rejects accepted-key conflicts", () => {
+    const engine = new ReconciliationEngine();
+    const invalid = { ...exchangeTrade, recordId: "correctable", quantity: "bad" };
+    expect(engine.import(invalid).status).toBe("invalid");
+    expect(engine.store.normalizedEvents.has("exchange:correctable")).toBe(false);
+
+    const corrected = { ...exchangeTrade, recordId: "correctable" };
+    expect(engine.import(corrected)).toMatchObject({
+      status: "imported",
+      reason: "Corrected invalid source record imported",
+    });
+    expect(engine.store.normalizedEvents.get("exchange:correctable")?.quantityAtomic).toBe(
+      100_000_000n,
+    );
+
+    expect(engine.import({ ...corrected, quantity: "2.00000000" })).toMatchObject({
+      status: "conflict",
+      reason: expect.stringContaining("conflicting payload"),
+    });
+    expect(engine.store.sourceRecords.get("exchange:correctable")?.quantity).toBe(
+      "1.00000000",
+    );
+    expect(engine.store.exceptions.at(-1)?.category).toBe("conflict");
+  });
+
+  it("validates manual evidence source, domain, and exclusive ownership", () => {
+    const engine = new ReconciliationEngine();
+    engine.import(withoutExternalId(exchangeTrade, "manual-source-a"));
+    engine.import(withoutExternalId(exchangeTrade, "manual-source-b"));
+    engine.import(withoutExternalId(ledgerTrade, "claimed-ledger"));
+    engine.import({
+      ...withoutExternalId(ledgerTrade, "wrong-domain"),
+      asset: "ETH",
+    });
+    const [accepted, unmatched] = engine.reconcileAll();
+    if (accepted === undefined || unmatched === undefined) throw new Error("Expected two cases");
+
+    expect(() =>
+      engine.resolveManually(
+        unmatched.caseId,
+        ["exchange:manual-source-a"],
+        "ops-user",
+        "invalid source selection",
+      ),
+    ).toThrow("must be a non-reversal ledger event");
+    expect(() =>
+      engine.resolveManually(
+        unmatched.caseId,
+        ["ledger:wrong-domain"],
+        "ops-user",
+        "invalid domain selection",
+      ),
+    ).toThrow("outside the case domain");
+    expect(() =>
+      engine.resolveManually(
+        unmatched.caseId,
+        ["ledger:claimed-ledger"],
+        "ops-user",
+        "attempted duplicate ownership",
+      ),
+    ).toThrow("already claimed by another case");
   });
 
   it("routes invalid input to exceptions and ties dashboard totals to normalized records", () => {

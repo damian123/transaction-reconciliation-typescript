@@ -52,7 +52,7 @@ export interface ReconciliationCase {
 export interface ExceptionRecord {
   exceptionId: string;
   sourceKey: string;
-  category: "invalid" | "duplicate";
+  category: "invalid" | "duplicate" | "conflict";
   reason: string;
   at: string;
 }
@@ -86,7 +86,7 @@ export interface ReconciliationConfig {
 
 export interface ImportOutcome {
   sourceKey: string;
-  status: "imported" | "duplicate" | "invalid";
+  status: "imported" | "duplicate" | "invalid" | "conflict";
   reason?: string;
 }
 
@@ -105,4 +105,10 @@ export interface DashboardSummary {
   exceptions: number;
   cases: Record<CaseStatus, number>;
   controlTotals: ControlTotal[];
+  ledgerCoverage: {
+    total: number;
+    matched: number;
+    unmatched: number;
+    unmatchedEventIds: string[];
+  };
 }

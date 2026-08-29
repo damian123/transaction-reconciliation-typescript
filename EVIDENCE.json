@@ -1,7 +1,9 @@
 {
   "schema_version": "1.0",
   "owner": "Lars Schouw",
-  "reviewed_on": "2026-08-28",
+  "repository_account": "damian123",
+  "identity_note": "Published under the GitHub account damian123; commits may use the display name Damian.",
+  "reviewed_on": "2026-08-29",
   "license": "MIT",
   "artifact": {
     "id": "E-CODE-002",
@@ -9,15 +11,18 @@
     "source_path": ".",
     "publication_status": "public",
     "public_url": "https://github.com/damian123/transaction-reconciliation-typescript",
-    "verification_command": "npm ci && npm run typecheck && npm test && npm run demo",
-    "expected_test_count": 8,
+    "verification_command": "npm ci && npm run verify",
+    "expected_test_count": 14,
     "claims_supported": [
       "exact fixed-scale financial values",
       "deterministic matching",
       "explicit ambiguity",
       "late reversals",
       "controlled overrides",
-      "audit history"
+      "audit history",
+      "exclusive ledger evidence",
+      "unmatched-ledger coverage",
+      "corrected invalid-record recovery"
     ],
     "evidence_files": [
       "README.md",
