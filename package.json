@@ -1,5 +1,5 @@
 {
-  "name": "blackridge-transaction-reconciliation-demo",
+  "name": "transaction-reconciliation-typescript",
   "version": "1.0.0",
   "private": true,
   "type": "module",
